@@ -1,0 +1,577 @@
+{% extends 'base.html' %}
+{% block content %}    
+<style>
+    .form-check-input, .custom-control-input{
+        transform: scale(1.9);
+        -webkit-transform: scale(1.9);
+    }
+    .custom-switch.custom-switch-lg {
+        padding-bottom: 1rem;
+            padding-left: 2.25rem;
+
+        & .custom-control-label {
+            padding-left: .75rem;
+            padding-top: 0.15rem;
+
+            &::before {
+            border-radius: 1rem;
+            height: 1.5rem;
+            width: 2.5rem;
+            }
+
+            &::after {
+            border-radius: .65rem;
+            height: calc(1.5rem - 4px);
+            width: calc(1.5rem - 4px);
+            }
+        }
+            .custom-control-input:checked ~ .custom-control-label::after{
+                transform: translateX(1rem);
+            }
+        }
+</style>
+<div class="card my-3">
+    
+    <div class="card-header d-flex justify-content-between">
+        <!-- Conditions count should be kept in the span given below as ( Conditions Count : n ) -->
+        <div class="card-title lead">
+            Alert Conditions <span id="condition_count"></span>
+        </div>
+    </div>
+    <div class="card-body" style="min-height: 70vh;">
+        <!-- Conditions -->
+        <ul class="list-group list-group-flush" id="container">
+        </ul>
+        <ul class="list-group list-group-flush" id="saved_conditions_container">
+        </ul>
+    </div>
+    <div class="card-footer text-center">
+        <button class="btn btn-danger" id="del_all" onclick="remove_all_forms()">
+            Delete All
+        </button>
+    </div>
+</div>
+{% endblock content %}
+    
+
+{% block scripts %}
+    <script>
+        const csrftoken = '{{ csrf_token }}';
+        var container = document.getElementById('container');
+        var savedConditionsContainer = document.getElementById('saved_conditions_container');
+        var add_btn = document.getElementById('addButton');
+        var del_all_btn = document.getElementById('remove-all');
+
+        // API Calls
+        async function loadSavedConditions() {
+            try {
+                const response = await fetch("{% url 'alerts_api:condition' %}");
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error loading saved conditions:', error);
+            }
+        }
+        async function load_metrics(uid){
+            try {
+                const response = await fetch(`{% url 'alerts_api:metrics' %}?catid=${uid}`);
+                if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('There has been a problem with your fetch operation:', error);
+                return null;
+            } 
+        }
+        async function load_triggers(uid){
+            try {
+                const response = await fetch(`{% url 'alerts_api:condition_triggers' %}?mid=${uid}`);
+                if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('There has been a problem with your fetch operation:', error);
+                return null;
+            } 
+        }
+        async function submitCondition(desc,data) {
+            try {
+                const response = await fetch("{% url 'alerts_api:condition' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({
+                        "alert_description":desc,
+                        "configuration":data
+                    })
+                });
+
+                if (response.ok) {
+                    const jsonResponse = await response.json();
+                    // alert('Condition saved successfully: ' + JSON.stringify(jsonResponse));
+                } else {
+                    const errorResponse = await response.json();
+                    alert('Error: ' + JSON.stringify(errorResponse));
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+            }
+        }
+        async function updateCondition(conditionId, updatedData) {
+            try {
+                const response = await fetch(`{% url 'alerts_api:condition' %}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({
+                        unique_id: conditionId,
+                        alert_description: updatedData.alert_description,
+                        configuration: updatedData.configuration
+                    })
+                });
+
+                if (response.ok) {
+                    const jsonResponse = await response.json();
+                    alert('Condition updated successfully: ' + JSON.stringify(jsonResponse));
+                    // return jsonResponse;
+                } else {
+                    const errorResponse = await response.json();
+                    alert('Error: ' + JSON.stringify(errorResponse));
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+            }
+        }
+        async function individualCondition(cid){
+            try {
+                const response = await fetch(`{% url 'alerts_api:condition' %}?cid=${cid}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error loading saved conditions:', error);
+            }
+        }
+
+        // Element Updaters
+        function update_saved_conditions(){
+            loadSavedConditions().then(data => {
+                data.forEach(element =>{
+                    add_form(data)
+                })
+            })
+        }
+        function update_metrics(id,eid,sdata=null){
+            load_metrics(id).then(data => {
+                var metric_select = document.getElementById(`metric_${eid}`)
+                data.forEach(element => {
+                    // console.log(element)
+                    metric_select.innerHTML = ''
+                    metric_select.innerHTML = data.map(optionText => `<option value="${optionText.id}">${optionText.name}</option>`).join('');
+                    metric_select.disabled = false
+                    if(sdata){
+                        metric_select.value = sdata.configuration.metric
+                    }
+                });
+
+                const current_selected_obj = data.find(item => item.id === parseInt(metric_select.value));
+                // console.log(current_selected_obj)
+                if(sdata){
+                    update_triggers(metric_select.value,eid,sdata)
+                }else{
+                    update_triggers(metric_select.value,eid,)
+                }
+                // console.log('Data received:', data);
+            }).catch(error => {
+                console.error('Error:', error);
+            });
+        }
+        function update_triggers(id,eid,sdata=null){
+            load_triggers(id).then(data => {
+                var trigger_select = document.getElementById(`trigger_${eid}`)
+                trigger_select.innerHTML = ''
+                trigger_select.innerHTML = data['conditions'].map(optionText => `<option value="${optionText.id}">${optionText.label}</option>`).join('');
+                trigger_select.disabled = false
+                if(sdata){
+                    trigger_select.value = sdata.configuration.trigger
+                }
+
+                truncate_saveCondition_fields(eid)
+
+                var m_parameters = data['metric']['parameters']
+                var variable = document.getElementById(`variable_${eid}`);
+                var is_variable = document.getElementById(`is_variable_${eid}`)
+                
+                if (m_parameters['required'] === true){
+                    console.log(m_parameters['required_for'].includes(parseInt(trigger_select.value)))
+                    if (m_parameters['required_for'].includes(parseInt(trigger_select.value))){
+                        if(sdata){
+                            variable.innerHTML = `
+                            <div class="input-group mb-3">
+                                <input type="text" class="form-control" id="variable_input_${eid}" aria-describedby="label_${eid}" value="${sdata.configuration.variable}">
+                                <div class="input-group-append">
+                                    <span class="input-group-text" id="label_${eid}">${m_parameters['indicator']}</span>
+                                </div>
+                            </div>           
+                            `    
+                        }else{
+                            variable.innerHTML = `
+                            <div class="input-group mb-3">
+                                <input type="text" class="form-control" id="variable_input_${eid}" aria-describedby="label_${eid}">
+                                <div class="input-group-append">
+                                    <span class="input-group-text" id="label_${eid}">${m_parameters['indicator']}</span>
+                                </div>
+                            </div>           
+                            `
+                        }
+                        restrictInputToRegex(`variable_input_${eid}`,m_parameters['regex'])
+                        is_variable.value = true;
+                    }else{
+                        variable.innerHTML = ''
+                        is_variable.value = false;    
+                    }
+                }else{
+                    variable.innerHTML = ''
+                    is_variable.value = false;
+                }
+                if(sdata){
+                    document.getElementById(`description_${eid}`).value = sdata.alert_description;
+                    document.getElementById(`severity_${eid}`).value = sdata.configuration.severity;
+                    $(`#action_${eid}`).val(sdata.configuration.actions).trigger('change');
+                }
+                // console.log('Data received:', data);
+            }).catch(error => {
+                console.error('Error:', error);
+            });
+        }
+        function add_form(data=null){
+            if(data === null){
+                var element_number = child_element_count()
+                container.innerHTML+= `
+                <li class="list-group-item pr-0 pl-0 pb-0" id="form_${element_number}">
+                    <div class="row justify-content-between">
+                        <div class="col pt-0 pb-0 mb-2 mt-2">
+                            <select class="custom-select" id="metricType_${element_number}" onchange="update_metrics(this.value,${element_number})">
+                                
+                                {% for metric_type in metric_types %}
+                                    <option value={{metric_type.id}}>{{metric_type.name}}</option>
+                                {% endfor %}
+                                    
+                            </select>
+                        </div>
+                        <div class="col pt-0 pb-0 mb-2 mt-2">
+                            <select class="custom-select" id="metric_${element_number}" onchange="update_triggers(this.value,${element_number})" disabled>            
+                            </select>
+                        </div>
+                        <div class="col pt-0 pb-0 mb-2 mt-2">
+                            <select class="custom-select" id="trigger_${element_number}" onchange="truncate_saveCondition_fields(${element_number})" disabled>            
+                            </select>
+                        </div>
+                        <div class="col pt-0 pb-0 mb-2 mt-2" id="variable_${element_number}">
+                        </div>
+                        <input type="hidden" id="is_variable_${element_number}">
+                        <div class="col-auto pt-0 pb-0 mb-2 mt-2">
+                            <button class="btn btn-success rounded-circle" type="button" onclick="save_validation(${element_number})">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                            <button class="btn btn-danger rounded-circle" onclick="truncate_saveCondition_fields(${element_number})">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                    </div>
+                </li>
+                <div class="modal fade" id="save_${element_number}" tabindex="-1" aria-labelledby="save_${element_number}Label" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="save_${element_number}Label">Save Condition</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row row-cols-1">
+                                <div class="col mb-3">
+                                    <label class="text-bold" for="description_${element_number}">Description</label>
+                                    <input type="text" class="form-control" id="description_${element_number}" name="description${element_number}" maxlength="100">
+                                </div>
+                                <div class="col mb-3">
+                                    <label class="text-bold" for="severity_${element_number}">Severity</label>
+                                    <select class="custom-select" id="severity_${element_number}">
+                                        <option value="1">Critical</option>
+                                        <option value="2">Elevated</option>
+                                        <option value="3">General</option>
+                                    </select>        
+                                </div>
+                                <div class="col">
+                                    <label class="text-bold" for="action_${element_number}">Actions</label>
+                                    <select class="multiselect_${element_number}" id="action_${element_number}" name="states[]" multiple="multiple" style="width:100%">
+                                
+                                        {% for action in actions %}
+                                            <option value="{{action.id}}">{{action.name}}</option>
+                                        {% endfor %}
+                                            
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-dismiss="modal" onclick="">Close</button>
+                            <button type="button" class="btn btn-primary" onclick="save_condition(${element_number})">Save Condition</button>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+                `
+                
+                var current_metricType = document.getElementById(`metricType_${element_number}`)
+                var current_metric = document.getElementById(`metric_${element_number}`)
+                var current_trigger = document.getElementById(`trigger_${element_number}`)
+                // console.log(current_metric.value)
+                update_metrics(current_metricType.value,element_number)
+                $(`.multiselect_${element_number}`).select2();
+            }else{
+                savedConditionsContainer.innerHTML = ''
+                data.forEach(element =>{
+                    savedConditionsContainer.innerHTML+= `
+                    <li class="list-group-item pr-0 pl-0 pb-0" id="form_${element.unique_id}">
+                        <div class="row justify-content-between" id="row_${element.unique_id}">
+                            <div class="col-auto pt-0 pb-0 mb-2 mt-2 text-capitalize">
+                                ${element.alert_description}
+                            </div>
+                            <div class="col-auto pt-0 pb-0 mb-2 mt-2">
+                                <button class="btn btn-warning rounded-circle" onclick="EditCondition('${element.unique_id}')">
+                                    <i class="fa-solid fa-pen-to-square"></i>
+                                </button>
+                                <button class="btn btn-danger rounded-circle" onclick="deleteCondition('${element.unique_id}')">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </li>
+                    `   
+                });   
+            }
+        }
+        function EditCondition(uid){
+            individualCondition(uid).then(data =>{
+                document.getElementById(`row_${uid}`).innerHTML = `
+                    <div class="col pt-0 pb-0 mb-2 mt-2">
+                        <select class="custom-select" id="metricType_${data.unique_id}" onchange="update_metrics(this.value,'${data.unique_id}')">
+                            
+                            {% for metric_type in metric_types %}
+                                <option value={{metric_type.id}}>{{metric_type.name}}</option>
+                            {% endfor %}
+                                
+                        </select>
+                    </div>
+                    <div class="col pt-0 pb-0 mb-2 mt-2">
+                        <select class="custom-select" id="metric_${data.unique_id}" onchange="update_triggers(this.value,'${data.unique_id}')" disabled>            
+                        </select>
+                    </div>
+                    <div class="col pt-0 pb-0 mb-2 mt-2">
+                        <select class="custom-select" id="trigger_${data.unique_id}" onchange="truncate_saveCondition_fields('${data.unique_id}')" disabled>            
+                        </select>
+                    </div>
+                    <div class="col pt-0 pb-0 mb-2 mt-2" id="variable_${data.unique_id}">
+                    </div>
+                    <input type="hidden" id="is_variable_${data.unique_id}">
+                    <div class="col-auto pt-0 pb-0 mb-2 mt-2">
+                        <button class="btn btn-success rounded-circle" type="button" onclick="save_validation('${data.unique_id}')">
+                            <i class="fa-solid fa-check"></i>
+                        </button>
+                        <button class="btn btn-danger rounded-circle" onclick="update_saved_conditions()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                <div class="modal fade" id="save_${data.unique_id}" tabindex="-1" aria-labelledby="save_${data.unique_id}Label" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="save_${data.unique_id}Label">Save Condition</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row row-cols-1">
+                                <div class="col mb-3">
+                                    <label class="text-bold" for="description_${data.unique_id}">Description</label>
+                                    <input type="text" class="form-control" id="description_${data.unique_id}" name="description${data.unique_id}" maxlength="100">
+                                </div>
+                                <div class="col mb-3">
+                                    <label class="text-bold" for="severity_${data.unique_id}">Severity</label>
+                                    <select class="custom-select" id="severity_${data.unique_id}">
+                                        <option value="1">Critical</option>
+                                        <option value="2">Elevated</option>
+                                        <option value="3">General</option>
+                                    </select>        
+                                </div>
+                                <div class="col">
+                                    <label class="text-bold" for="action_${data.unique_id}">Actions</label>
+                                    <select class="multiselect_${data.unique_id}" id="action_${data.unique_id}" name="states[]" multiple="multiple" style="width:100%">
+                                
+                                        {% for action in actions %}
+                                            <option value="{{action.id}}">{{action.name}}</option>
+                                        {% endfor %}
+                                            
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-dismiss="modal" onclick="">Close</button>  
+                            <button type="button" class="btn btn-primary" onclick="save_condition('${data.unique_id}',true)">Save Condition</button>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+                `
+                var metricType = document.getElementById(`metricType_${uid}`);
+                metricType.value = data.configuration.metric_type;
+                update_metrics(metricType.value,uid,data);
+                $(`.multiselect_${data.unique_id}`).select2();
+            });
+        }
+        async function deleteCondition(conditionId) {
+            if (confirm('Are you sure you want to delete this condition?')) {
+                try {
+                    const response = await fetch(`{% url 'alerts_api:condition' %}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrftoken
+                        },
+                        body: JSON.stringify({ unique_id: conditionId })
+                    });
+
+                    if (response.ok) {
+                        alert('Condition deleted successfully.');
+                        update_saved_conditions();
+                    } else {
+                        alert('Error deleting condition.');
+                    }
+                } catch (error) {
+                    console.error('Error deleting condition:', error);
+                    alert('Network error. Please try again.');
+                }
+            }
+        }
+
+        // Validate And Save Condition
+        function save_condition(eid,update=null){
+            var description = document.getElementById(`description_${eid}`)
+            // console.log(description.value)
+            // console.log(actions.value)
+            if(description.value != ''){
+                var metricType = document.getElementById(`metricType_${eid}`)
+                var metric = document.getElementById(`metric_${eid}`)
+                var trigger = document.getElementById(`trigger_${eid}`)
+                var is_variable = document.getElementById(`is_variable_${eid}`)
+                var severity = document.getElementById(`severity_${eid}`)
+                let payload = {
+                    "metric_type":metricType.value,
+                    "metric":metric.value,
+                    "trigger":trigger.value,
+                    "is_variable":is_variable.value,
+                    "actions":$(`#action_${eid}`).val(),
+                    "severity":severity.value,
+                }
+                if(is_variable.value === 'true'){
+                    var variable = document.getElementById(`variable_input_${eid}`);
+                    payload.variable = variable.value;
+                }
+
+                if(update){
+                    console.log("update triggred")
+                    var final_paylaod = {'alert_description':description.value, 'configuration':payload}
+                    console.log(eid)
+                    console.log({'alert_description':description.value, 'configuration':payload})
+                    updateCondition(eid,final_paylaod)
+                }else{
+                    submitCondition(description.value,payload,eid);
+                }
+                $(`#save_${eid}`).modal('hide');
+                update_saved_conditions();
+            }else{
+                alert('Fill out the blanks in order to save the condition.')
+            }
+        }
+        function save_validation(eid){
+            var is_varibale = document.getElementById(`is_variable_${eid}`)
+            // console.log(is_varibale)
+            if(is_varibale.value === 'true'){
+                var varibale = document.getElementById(`variable_input_${eid}`)
+                if(varibale.value != ''){
+                    $(`#save_${eid}`).modal('show');
+                }else{
+                    alert('Fill out the blanks in order to save the condition.');
+                }
+            }else{
+                $(`#save_${eid}`).modal('show');
+            }
+        }
+
+        // Utility Functions
+        function child_element_count(){
+            return container.children.length;
+        }
+        function truncate_saveCondition_fields(eid){
+            var is_variable = document.getElementById(`is_variable_${eid}`);
+            if(is_variable.value === 'true'){
+                document.getElementById(`variable_input_${eid}`).value = '';
+            }
+            document.getElementById(`description_${eid}`).value = '';
+            document.getElementById(`severity_${eid}`).value = 1;
+            $(`#action_${eid}`).val(null).trigger('change');
+        }
+
+        // Onload Calls
+        window.document.onload = add_form();
+        window.document.onload = update_saved_conditions();
+
+        /* 
+        Dynamic Input Restricter For The Alert Variables
+        It Restrict Input Accordig to Given Regex 
+        */
+        function restrictInputToRegex(inputFieldId, regexString) {
+            // Get the input field element
+            const inputField = document.getElementById(inputFieldId);
+
+            // Convert the regex string to a RegExp object
+            const regex = new RegExp(regexString);
+
+            // Add an event listener for the input event
+            inputField.addEventListener('input', function(event) {
+                // Get the current value of the input field
+                const currentValue = inputField.value;
+
+                // Check if the current value matches the regex for partial match
+                if (!regex.test(currentValue)) {
+                    // If it doesn't match, reset the value to the previous valid state
+                    inputField.value = inputField.dataset.previousValue || '';
+                } else {
+                    // If it matches, update the previous value
+                    inputField.dataset.previousValue = currentValue;
+                }
+            });
+
+            // Store the initial empty value as valid
+            inputField.dataset.previousValue = '';
+        }
+    </script>
+{% endblock scripts %}
+    
